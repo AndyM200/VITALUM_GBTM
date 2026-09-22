@@ -1,0 +1,203 @@
+# Longitudinal Dietary Trajectory Analysis: VITALUM Secondary Analysis Pipeline
+
+This repository contains the statistical scripts and workflow procedures supporting the paper:
+
+> **Heterogeneous Trajectories of Fruit and Vegetable Intake Following a Behavioural Intervention in Older Adults: Secondary Analysis of the VITALUM Randomised Trial**[cite: 1]  
+> *A. Misir, V. Lima Passos, and I. Mesters*[cite: 1]
+
+---
+
+## Repository Structure
+
+```text
+├── sas/
+│   └── 01_gbtm_class_enumeration.sas    # SAS PROC TRAJ models (1- to 10-class models)
+├── spss/
+│   ├── 01_determinant_crosstabs.sps     # Intake by determinant trajectory cross-tabulations
+│   └── 02_multinomial_regression.sps    # Final multinomial logistic regression models
+├── R/                                   # Standalone executable R scripts (.R)
+│   ├── 01_fcap_model_selection.R        # F-CAP evaluation and diagnostic plots
+│   ├── 02_trajectory_plots.R            # Trajectory graphs with 95% confidence bands
+│   ├── 03_cramers_v_heatmap.R           # Association heatmap (Cramér's V)
+│   └── 04_forest_plots.R                # Multinomial logistic regression forest plots
+└── output/
+    └── vegetables/                      # Exported CSV outputs for F-CAP diagnostics
+
+```
+
+---
+
+## 1. Pipeline Overview
+
+The statistical workflow is partitioned across three environments:
+
+1. **SAS 9.4 (`PROC TRAJ`)**: Unconditional Group-Based Trajectory Modelling (GBTM) and class enumeration ($k = 1$ to $10$).
+
+
+2. **R 4.2.0** *(standalone scripts)*: Model fit assessment via F-CAP, generation of trajectory plots, Cramér's $V$ heatmaps, and odds ratio forest plots.
+
+
+3. **IBM SPSS Statistics 28.0**: Bivariate cross-tabulations and multivariable multinomial logistic regression.
+
+
+
+---
+
+## 2. SAS Syntax: Latent Class Enumeration (k = 1 to 10)
+
+This macro automates the unconditional quadratic censored normal (`CNORM`) GBTM estimation across 1 to 10 trajectory groups for vegetable intake (`a1`–`a3`) and centered intake (`ac1`–`ac3`), systematically exporting the parameter estimates (`fcap_bic_*.csv`) and individual posterior assignment probabilities (`fcap_prob_*.csv`) needed for the F-CAP R scripts.
+
+```sas
+/* ========================================================================== */
+/* STEP 1: GBTM CLASS ENUMERATION (SAS 9.4 PROC TRAJ)                        */
+/* ========================================================================== */
+
+/* Relative directory path for exporting diagnostic outputs */
+%let project_path = ./output/vegetables;
+
+%macro run_gbtm_enumeration;
+  %do k = 1 %to 10;
+    
+    /* Construct polynomial order string of degree 2 for k classes */
+    %let ord = ;
+    %do i = 1 %to &k;
+      %let ord = &ord 2;
+    %end;
+
+    /* Execute PROC TRAJ for k classes */
+    PROC TRAJ DATA=WORK.am 
+              OUT=OF 
+              OUTEST=OE 
+              OUTPLOT=OP 
+              OUTSTAT=OS 
+              OUTPLOT2=op2 
+              OUTSTAT2=os2;
+      ID ID; 
+      VAR a1-a3; 
+      INDEP t0-t2;
+      MODEL CNORM; 
+      MIN 0; 
+      MAX 500; 
+      NGROUPS &k; 
+      ORDER &ord;
+      
+      VAR2 ac1-ac3; 
+      INDEP2 t0-t2;
+      MODEL2 CNORM; 
+      MIN2 -210; 
+      MAX2 220; 
+      NGROUPS &k; 
+      ORDER2 &ord;
+      
+      MULTGROUPS &k;
+    RUN;
+
+    /* Plot trajectory profiles */
+    %TRAJPLOTNEW(OP, OS, "Vegetable Intake - &k Classes");
+    %TRAJPLOT(OP, OS, "Vegetable Intake - &k Classes");
+
+    /* Export model fit statistics and BIC for R F-CAP processing */
+    PROC EXPORT DATA=Work.Oe 
+                OUTFILE="&project_path/fcap_bic_&k..csv" 
+                DBMS=CSV REPLACE;
+    RUN;
+
+    /* Export posterior assignment probabilities for R F-CAP processing */
+    PROC EXPORT DATA=Work.Of 
+                OUTFILE="&project_path/fcap_prob_&k..csv" 
+                DBMS=CSV REPLACE;
+    RUN;
+    
+  %end;
+%mend run_gbtm_enumeration;
+
+/* Run enumeration loop */
+%run_gbtm_enumeration;
+
+```
+
+---
+
+## 3. R Execution Scripts (Reference)
+
+Diagnostic evaluation and graphics generation are handled via the executable `.R` scripts located in the `/R` directory:
+
+* **`01_fcap_model_selection.R`**: Evaluates the exported SAS CSV files against F-CAP criteria (BIC, AIC, Log-Likelihood, APPA $> 0.70$, OCC $> 5.0$, and class viability $\ge 5\%$).
+
+
+* **`02_trajectory_plots.R`**: Plots trajectory shapes with empirical 95% confidence bands and assigned class proportions across 0, 25, 47, and 73 weeks.
+
+
+* **`03_cramers_v_heatmap.R`**: Computes pairwise Cramér's $V$ associations among trial arms, dietary behaviors, and determinant trajectories.
+
+
+* **`04_forest_plots.R`**: Renders forest plots of adjusted Odds Ratios and 95% CIs on a logarithmic scale.
+
+
+
+---
+
+## 4. SPSS Syntax: Cross-Tabulations
+
+Calculates contingency distributions and symmetric measures between assigned vegetable intake trajectory groups (`VegeRT4`) and behavioral determinant trajectory groups (e.g., habit strength `HabitVR`):
+
+```spss
+* ==============================================================================
+* STEP 2: CROSS-TABULATIONS AND CONTINGENCY ANALYSES (SPSS 28.0)
+* ==============================================================================
+
+CROSSTABS 
+  /TABLES=VegeRT4 BY HabitVR 
+  /FORMAT=AVALUE TABLES 
+  /STATISTICS=CHISQ PHI 
+  /CELLS=COUNT ROW COLUMN TOTAL 
+  /COUNT ROUND CELL 
+  /BARCHART.
+
+```
+
+---
+
+## 5. SPSS Syntax: Multinomial Logistic Regression
+
+Estimates the final multivariable multinomial logistic regression model predicting vegetable intake trajectory membership from determinants and sociodemographics, using **Minimal Consumers** as the reference category.
+
+```spss
+* ==============================================================================
+* STEP 3: MULTINOMIAL LOGISTIC REGRESSION (SPSS 28.0)
+* ==============================================================================
+
+/* Note: Habit trajectories 1 and 2 are collapsed into a single category */
+/* (HabitVRMul_Colapse) to resolve quasi-complete separation.           */
+
+NOMREG VegeRT4 (BASE=FIRST ORDER=ASCENDING) 
+  BY GENDER Intervention AwarenessVRMul HabitVRMul_Colapse AttitudeVRMul_Collapsed ModelingVRMul 
+  WITH AGE 
+  /CRITERIA CIN(95) DELTA(0) MXITER(100) MXSTEP(5) CHKSEP(20) LCONVERGE(0) PCONVERGE(0.000001) 
+    SINGULAR(0.00000001) 
+  /MODEL 
+  /STEPWISE=PIN(.05) POUT(0.1) MINEFFECT(0) RULE(SINGLE) ENTRYMETHOD(LR) REMOVALMETHOD(LR) 
+  /INTERCEPT=INCLUDE 
+  /PRINT=PARAMETER SUMMARY LRT CPS STEP MFI.
+
+```
+
+---
+
+## 6. Guidelines for Reporting (GRoLTS Compliance)
+
+This workflow adheres to the **Guidelines for Reporting on Latent Trajectory Studies (GRoLTS)** checklist (main paper, Appendix C):
+
+* **Time metric:** Fixed measurement intervals at baseline, 25, 47, and 73 weeks for dietary outcomes; baseline, 25, and 47 weeks for determinants.
+
+
+* **Missing data handling:** Maximum Likelihood estimation assuming MAR, supplemented by complete-case sensitivity analyses and attrition modelling.
+
+
+* **Class enumeration:** Unconditional $k = 1$ to $10$ model extraction followed by systematic polynomial pruning.
+
+
+
+```
+
+```
