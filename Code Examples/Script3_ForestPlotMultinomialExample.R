@@ -148,8 +148,8 @@ p <- ggplot(
     expand = expansion(mult = c(0.02, 0.25))
   ) +
   labs(
-    title   = "Determinants of Behavior Trajectories vs. Vegetables Intake Trajectories",
-    y       = "Determinants of Behavior Trajectories with Age and Sex",
+    title   = "Determinants of Behaviour Trajectories vs. Vegetables Intake Trajectories",
+    y       = "Determinants of Behaviour Trajectories with Age and Sex",
     caption = "*** p<0.001, ** p<0.01, * p<0.05 | Extreme values filtered"
   ) +
   theme_minimal(base_size = 9) +
